@@ -1,27 +1,39 @@
 # DC Power
 
-Phần mềm điều khiển nguồn DC OWON SPM3103 (thay thế phần mềm gốc), chạy trên Windows.
+Phần mềm điều khiển nguồn DC + đồng hồ vạn năng OWON SPM3103 (thay thế phần mềm gốc).
 
-- Ngôn ngữ: Python 3.11+
-- Giao diện: PySide6 (Qt)
-- Giao tiếp: SCPI qua USB/COM (pyserial)
-- Đóng gói: PyInstaller -> .exe
+- Python 3.9+ · PySide6 (Qt) · pyqtgraph · pyserial
+- Chạy trên Windows (code đa nền tảng, dev/test được trên macOS)
+- Có chế độ **Giả lập (Demo)** để dùng thử khi chưa cắm máy
 
 ## Chạy thử
 ```
 python -m venv .venv
-.venv\Scripts\activate        # Windows  (macOS: source .venv/bin/activate)
+.venv\Scripts\activate            # macOS: source .venv/bin/activate
 pip install -r requirements.txt
-python -m dcpower
+python run.py
 ```
+Chọn cổng **Giả lập (Demo)** → **Kết nối** để xem thử.
+
+## Build ra .exe (trên Windows)
+Chạy `build_windows.bat` → kết quả ở `dist\DC Power\DC Power.exe`
+(cả thư mục `dist\DC Power` là bản cài, copy nguyên thư mục sang máy khác).
+
+## Logo
+Thả ảnh vào `upload/` (PNG nền trong suốt / ICO / SVG). Ảnh đầu tiên tìm thấy được dùng
+cho logo trên thanh công cụ, icon cửa sổ và icon .exe.
+
+## Lệnh SCPI
+Toàn bộ lệnh ở `src/dcpower/device/commands.py` — **chưa xác nhận trên máy thật**,
+sai lệnh nào thì sửa tại đây.
 
 ## Cấu trúc
 ```
 src/dcpower/
-  device/   # driver SCPI cho SPM3103
-  core/     # logic: đo, log, sequence, cấu hình
-  ui/       # giao diện PySide6
-docs/       # đặc tả, tài liệu lệnh SCPI
-tests/      # unit test (có máy giả lập)
-assets/     # icon, ảnh
+  device/   commands.py (bảng lệnh), transport.py (serial + giả lập), spm.py (driver)
+  core/     worker.py (luồng giao tiếp, tự kết nối lại), data.py (buffer, CSV, mAh/Wh)
+  ui/       main_window, chart_panel, psu_panels, gauge, dmm_panel, sequence_panel, style
+docs/SPEC.md   đặc tả tính năng
+tests/         pytest
 ```
+Log nguồn lưu tại `Documents/DC Power Logs/`.
