@@ -195,7 +195,9 @@ class DmmController(QObject):
     def toggle_hold(self):
         self.btn_hold.toggle()
 
-    def on_sample(self, t: float, raw: float):
+    def on_sample(self, t: float, raw: float, func: str = ""):
+        if func and func != self.func:  # giá trị của chức năng cũ còn trên đường truyền
+            return
         self.last_raw = raw
         if self.hold:
             return

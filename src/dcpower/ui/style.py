@@ -31,6 +31,10 @@ QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit {{
 QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {{ border-color: #3d7bff; }}
 QComboBox QAbstractItemView {{ background: #1b1e24; color: #f0f2f5; }}
 QTableWidget {{ background: #1b1e24; color: #e6e9ee; gridline-color: #2a2e36; border: 1px solid #2a2e36; }}
+QHeaderView {{ background: #1b1e24; }}
+QTableCornerButton::section {{ background: #242830; border: none; }}
+QTabBar::tab {{ background: #1f232a; color: #aab1bd; border: 1px solid #2a2e36; padding: 6px 14px; }}
+QTabBar::tab:selected {{ background: #2a2f38; color: #ffffff; border-bottom: 2px solid #3d7bff; }}
 QHeaderView::section {{ background: #242830; color: #aab1bd; border: none; padding: 4px; }}
 QToolBar {{ background: #1b1e24; border-bottom: 1px solid #2a2e36; spacing: 6px; padding: 4px; }}
 QStatusBar {{ background: #1b1e24; color: #aab1bd; }}

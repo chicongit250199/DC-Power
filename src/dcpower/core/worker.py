@@ -16,7 +16,7 @@ class DeviceWorker(QObject):
     disconnected = Signal()
     status = Signal(str, str)                # text, level: ok/warn/err/info
     psu_sample = Signal(float, float, float)  # t, V, A
-    dmm_sample = Signal(float, float)        # t, value
+    dmm_sample = Signal(float, float, str)   # t, value, chức năng DMM
     output_changed = Signal(bool)
     setpoints_changed = Signal(dict)
 
@@ -30,6 +30,8 @@ class DeviceWorker(QObject):
         self._want = False
         self._dev: SPM3103 | None = None
         self.dmm_enabled = True
+        self._dmm_func = ""
+        self._dmm_skip = 0
         self.interval_s = 0.0  # 0 = nhanh nhất có thể
         self._running = True
         self._th = threading.Thread(target=self._loop, daemon=True)
@@ -104,6 +106,10 @@ class DeviceWorker(QObject):
                 self.setpoints_changed.emit(self._dev.get_setpoints())
             else:
                 getattr(self._dev, name)(*args)
+                if name in ("dmm_function", "dmm_range"):
+                    if name == "dmm_function":
+                        self._dmm_func = args[0]
+                    self._dmm_skip = 1  # bỏ 1 lần đo đầu sau khi đổi thang
 
     def _loop(self):
         errors = 0
@@ -129,7 +135,11 @@ class DeviceWorker(QObject):
                 v, a = self._dev.measure()
                 self.psu_sample.emit(time.time(), v, a)
                 if self.dmm_enabled:
-                    self.dmm_sample.emit(time.time(), self._dev.dmm_measure())
+                    val = self._dev.dmm_measure()
+                    if self._dmm_skip:
+                        self._dmm_skip -= 1
+                    else:
+                        self.dmm_sample.emit(time.time(), val, self._dmm_func)
                 if t_start - last_out_poll > 1.0:  # đồng bộ khi bấm nút trên máy
                     last_out_poll = t_start
                     self.output_changed.emit(self._dev.get_output())
