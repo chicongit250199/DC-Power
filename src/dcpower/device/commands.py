@@ -1,14 +1,15 @@
 """Bảng lệnh SCPI cho OWON SPM3103.
 
-CHƯA XÁC NHẬN TRÊN MÁY THẬT. Các lệnh dựa trên quy ước SCPI chung của OWON
-(dòng SP/SPE cho nguồn, dòng XDM cho đồng hồ vạn năng). Khi test với máy thật,
-lệnh nào sai chỉ cần sửa ở file này.
+Đã đối chiếu với phần mềm gốc "DC power multimeter control V1.7.6" và test trên
+máy thật (OWON,SPM3103, FV:V2.1.0) qua cổng CH340, 115200 8N1.
 """
 
 SERIAL = {
     "baudrate": 115200,
     "timeout": 0.5,          # giây, chờ phản hồi
-    "terminator": "\n",
+    "terminator": "\r\n",    # lệnh ghi (giống phần mềm gốc)
+    "query_terminator": "\n",  # lệnh hỏi (giống phần mềm gốc)
+    "write_delay": 0.1,      # giây nghỉ sau mỗi lệnh ghi (bản gốc cũng 100 ms; <50 ms máy bỏ lệnh)
 }
 
 PSU = {
@@ -26,29 +27,39 @@ PSU = {
     "get_output": "OUTP?",
     # Đọc V và A trong 1 lệnh (nhanh hơn). Nếu máy không hỗ trợ sẽ tự
     # chuyển sang đọc riêng meas_voltage / meas_current.
-    "meas_all": "MEAS:ALL?",
+    # -> "V,A,W,OVP,OCP,OTP,chế độ"  vd "12.001,0.153,1.836,OFF,OFF,OFF,1"
+    # chế độ: 0 = Standby, 1 = CV, 2 = CC, 3 = Lỗi (giống phần mềm gốc)
+    "meas_info": "MEASure:ALL:INFO?",
+    "meas_all": "MEAS:ALL?",           # -> "0.000,0.000"
     "meas_voltage": "MEAS:VOLT?",
     "meas_current": "MEAS:CURR?",
-    "remote": "SYST:REM",
-    "local": "SYST:LOC",
+    "remote": "SYSTem:REMote",
+    "local": "SYSTem:LOCal",
 }
 
-# Chức năng đồng hồ vạn năng: khóa -> (tên hiển thị, đơn vị, lệnh cấu hình, danh sách range)
-# Range "AUTO" luôn có. Lệnh range: DMM["set_range"].
+# Chức năng đồng hồ vạn năng:
+# khóa -> (tên hiển thị, đơn vị, lệnh chọn chức năng, {nhãn range: giá trị SCPI}, tiền tố lệnh range)
+# Range "AUTO" luôn có trên giao diện. Lệnh range: "<tiền tố>:RANGe <giá trị>" / "<tiền tố>:RANGe:AUTO 1".
 DMM_FUNCTIONS = {
-    "DCV":  ("DC V",       "V",  "CONF:VOLT:DC",  ["200mV", "2V", "20V", "200V", "1000V"]),
-    "ACV":  ("AC V",       "V",  "CONF:VOLT:AC",  ["200mV", "2V", "20V", "200V", "750V"]),
-    "DCA":  ("DC A",       "A",  "CONF:CURR:DC",  ["200uA", "2mA", "20mA", "200mA", "2A", "10A"]),
-    "ACA":  ("AC A",       "A",  "CONF:CURR:AC",  ["20mA", "200mA", "2A", "10A"]),
-    "RES":  ("Điện trở",   "Ω",  "CONF:RES",      ["200", "2k", "20k", "200k", "2M", "20M", "100M"]),
-    "CAP":  ("Tụ điện",    "F",  "CONF:CAP",      ["2nF", "20nF", "200nF", "2uF", "20uF", "200uF", "10mF"]),
-    "DIOD": ("Diode",      "V",  "CONF:DIOD",     []),
-    "CONT": ("Thông mạch", "Ω",  "CONF:CONT",     []),
+    "DCV":  ("DC V",       "V",  "FUNCtion:VOLTage:DC",
+             {"200mV": "200E-3", "2V": "2", "20V": "20", "200V": "200", "1000V": "1000"}, "VOLT:DC"),
+    "ACV":  ("AC V",       "V",  "FUNCtion:VOLTage:AC",
+             {"200mV": "200E-3", "2V": "2", "20V": "20", "200V": "200", "750V": "750"}, "VOLT:AC"),
+    "DCA":  ("DC A",       "A",  "FUNCtion:CURRent:DC", {"200mA": "200E-3", "10A": "10"}, "CURR:DC"),
+    "ACA":  ("AC A",       "A",  "FUNCtion:CURRent:AC", {"200mA": "200E-3", "10A": "10"}, "CURR:AC"),
+    "RES":  ("Điện trở",   "Ω",  "FUNCtion:RESistance",
+             {"200": "200", "2k": "2E3", "20k": "20E3", "200k": "200E3", "2M": "2E6",
+              "20M": "20E6", "100M": "100E6"}, "RES"),
+    "CAP":  ("Tụ điện",    "F",  "FUNCtion:CAPacitance", {}, "CAP"),
+    "DIOD": ("Diode",      "V",  "FUNCtion:DIODe",       {}, "DIOD"),
+    "CONT": ("Thông mạch", "Ω",  "FUNCtion:CONTinuity",  {}, "CONT"),
 }
 
 DMM = {
-    "measure": "MEAS1?",         # đọc giá trị hiện tại
-    "set_range": "RANGE {range}",
-    "auto_range": "AUTO",
+    # -> "VOLT:DC,+0.0016V,AUTO,2V" | "RES,OL,AUTO,200k Ohm" | "DIOD,Open,Manual,"
+    "measure": "CONFigure:ALL?",
+    "set_range": "{prefix}:RANGe {range}",
+    "auto_range": "{prefix}:RANGe:AUTO 1",
+    "hold": ":MULTimeter:HOLD {state}",   # ON / OFF
     "continuity_threshold_ohm": 50.0,
 }

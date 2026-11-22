@@ -20,8 +20,11 @@ class DeviceWorker(QObject):
     output_changed = Signal(bool)
     setpoints_changed = Signal(dict)
 
+    psu_status = Signal(dict)                # {'mode': CV/CC/STBY/LỖI, 'ovp','ocp','otp'}
+
     RECONNECT_S = 2.0
     MAX_ERRORS = 3
+    DMM_EVERY = 4  # đọc đồng hồ 1 lần mỗi 4 vòng đo nguồn
 
     def __init__(self):
         super().__init__()
@@ -33,6 +36,9 @@ class DeviceWorker(QObject):
         self._dmm_func = ""
         self._dmm_skip = 0
         self.interval_s = 0.0  # 0 = nhanh nhất có thể
+        self._cycle = 0
+        self._last_st: dict = {}
+        self._last_sp: dict = {}
         self._running = True
         self._th = threading.Thread(target=self._loop, daemon=True)
         self._th.start()
@@ -84,10 +90,15 @@ class DeviceWorker(QObject):
             dev = SPM3103(self._port)
             sp = dev.get_setpoints()
             out = dev.get_output()
+            dev.enter_remote()
         except Exception as e:  # noqa: BLE001
             self.status.emit(f"Không kết nối được: {e}", "err")
+            if "dev" in locals():
+                dev.close()  # nhả cổng COM để lần thử sau mở lại được
             return False
         self._dev = dev
+        self._last_st = {}
+        self._last_sp = sp
         with self._q.mutex:
             self._q.queue.clear()
         self.connected.emit(dev.idn, sp, out)
@@ -103,7 +114,8 @@ class DeviceWorker(QObject):
             if name == "_emit_output":
                 self.output_changed.emit(self._dev.get_output())
             elif name == "_emit_setpoints":
-                self.setpoints_changed.emit(self._dev.get_setpoints())
+                self._last_sp = self._dev.get_setpoints()
+                self.setpoints_changed.emit(self._last_sp)
             else:
                 getattr(self._dev, name)(*args)
                 if name in ("dmm_function", "dmm_range"):
@@ -115,6 +127,7 @@ class DeviceWorker(QObject):
         errors = 0
         last_try = 0.0
         last_out_poll = 0.0
+        last_sp_poll = time.monotonic()
         while self._running:
             if not self._want:
                 if self._dev:
@@ -132,17 +145,33 @@ class DeviceWorker(QObject):
             t_start = time.monotonic()
             try:
                 self._run_queue()
-                v, a = self._dev.measure()
+                v, a, st = self._dev.measure_info()
                 self.psu_sample.emit(time.time(), v, a)
-                if self.dmm_enabled:
-                    val = self._dev.dmm_measure()
-                    if self._dmm_skip:
-                        self._dmm_skip -= 1
+                if st and st != self._last_st:
+                    self._last_st = st
+                    self.psu_status.emit(st)
+                # Đồng hồ vạn năng đọc thưa hơn để dòng/áp được lấy mẫu dày nhất có thể
+                self._cycle += 1
+                if self.dmm_enabled and self._cycle % self.DMM_EVERY == 0:
+                    try:
+                        val, func = self._dev.dmm_read()
+                    except TransportError as e:
+                        # Lỗi đọc đồng hồ không được làm rớt kết nối nguồn
+                        self.status.emit(f"Đồng hồ vạn năng: {e}", "warn")
                     else:
-                        self.dmm_sample.emit(time.time(), val, self._dmm_func)
+                        if self._dmm_skip:
+                            self._dmm_skip -= 1
+                        else:
+                            self.dmm_sample.emit(time.time(), val, func or self._dmm_func)
                 if t_start - last_out_poll > 1.0:  # đồng bộ khi bấm nút trên máy
                     last_out_poll = t_start
                     self.output_changed.emit(self._dev.get_output())
+                if t_start - last_sp_poll > 2.0:  # đồng bộ khi vặn núm V/A trên máy
+                    last_sp_poll = t_start
+                    sp = self._dev.get_setpoints()
+                    if sp != self._last_sp:
+                        self._last_sp = sp
+                        self.setpoints_changed.emit(sp)
                 errors = 0
             except (TransportError, OSError) as e:
                 errors += 1

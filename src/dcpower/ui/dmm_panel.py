@@ -11,12 +11,13 @@ import time
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox,
                                QFileDialog, QGridLayout, QHBoxLayout, QHeaderView,
-                               QLabel, QPushButton, QTableWidget, QTableWidgetItem,
+                               QLabel, QPushButton, QSizePolicy, QTableWidget, QTableWidgetItem,
                                QVBoxLayout, QWidget, QButtonGroup)
 
 from ..core.data import Stats, si_format
 from ..device import commands as C
 from .gauge import AnalogGauge, nice_ceil
+from .psu_panels import FitLabel
 
 _PFX = {"p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "m": 1e-3, "k": 1e3, "M": 1e6, "G": 1e9}
 
@@ -44,6 +45,7 @@ class DmmController(QObject):
         self._recent = collections.deque(maxlen=30)
         self._last_beep = 0.0
         self._last_auto_rec = 0.0
+        self._dropped = 0
         self.gauge_panel = self._build_gauge()
         self.control_panel = self._build_controls()
         self._select_func("DCV")
@@ -53,12 +55,14 @@ class DmmController(QObject):
         w = QWidget()
         w.setObjectName("Panel")
         self.gauge = AnalogGauge()
-        self.lbl_stats = QLabel("")
-        self.lbl_stats.setAlignment(Qt.AlignCenter)
-        self.lbl_stats.setStyleSheet("font-family:Consolas,Menlo,monospace; font-size:13px; color:#aab1bd;")
+        # Dòng Min/Max/TB tự co chữ cho vừa bề ngang, không bị cắt
+        self.lbl_stats = FitLabel("", "muted", Qt.AlignCenter, max_px=15, min_h=18)
+        self.lbl_stats.setFixedHeight(20)
+        self.lbl_stats.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.lbl_flags = QLabel("")
         self.lbl_flags.setAlignment(Qt.AlignCenter)
-        self.lbl_flags.setStyleSheet("color:#ffb547; font-weight:800; font-size:14px;")
+        self.lbl_flags.setProperty("role", "flag")
+        self.lbl_flags.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 6, 8, 6)
         lay.addWidget(self.lbl_flags)
@@ -83,6 +87,9 @@ class DmmController(QObject):
             b.clicked.connect(lambda _=False, k=key: self._select_func(k))
             self._func_group.addButton(b)
             b.setProperty("func", key)
+            hot = {"DCV": "Ctrl+1", "RES": "Ctrl+2", "DIOD": "Ctrl+3"}.get(key)
+            if hot:
+                b.setToolTip(f"{name} ({hot})")
             grid.addWidget(b, i // 4, i % 4)
 
         self.cmb_range = QComboBox()
@@ -117,7 +124,7 @@ class DmmController(QObject):
         btn_export = QPushButton("Xuất CSV")
         btn_export.clicked.connect(self._export)
         btn_clear = QPushButton("Xóa")
-        btn_clear.clicked.connect(lambda: self.table.setRowCount(0))
+        btn_clear.clicked.connect(self._clear_table)
         rr = QHBoxLayout()
         for x in (self.btn_rec, self.chk_auto, self.sp_auto):
             rr.addWidget(x)
@@ -128,8 +135,13 @@ class DmmController(QObject):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["#", "Thời gian", "Chức năng", "Giá trị"])
         self.table.verticalHeader().setVisible(False)
+        # Chiều cao dòng cố định: Qt khỏi đo lại từng dòng -> thêm dòng/cuộn nhanh khi bảng dài
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table.verticalHeader().setDefaultSectionSize(24)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        # Cột "#" bề rộng cố định: ResizeToContents bắt Qt dò lại hàng nghìn dòng mỗi lần thêm
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        self.table.setColumnWidth(0, 64)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         lay = QVBoxLayout(w)
@@ -146,6 +158,18 @@ class DmmController(QObject):
     def unit(self) -> str:
         return C.DMM_FUNCTIONS[self.func][1]
 
+    def _fmt(self, x: float) -> str:
+        if x is None or not math.isfinite(x):
+            return "OL"
+        if self.func == "DIOD":  # diode luôn hiển thị bằng V, không đổi sang mV
+            return f"{x:.4f} V"
+        return si_format(x, self.unit)
+
+    def select_func(self, key: str):
+        """Dùng cho phím tắt Ctrl+1/2/3."""
+        if key != self.func:
+            self._select_func(key)
+
     def _select_func(self, key: str):
         self.func = key
         for b in self._func_group.buttons():
@@ -153,7 +177,7 @@ class DmmController(QObject):
         self.cmb_range.blockSignals(True)
         self.cmb_range.clear()
         self.cmb_range.addItem("AUTO")
-        self.cmb_range.addItems(C.DMM_FUNCTIONS[key][3])
+        self.cmb_range.addItems(list(C.DMM_FUNCTIONS[key][3]))
         self.cmb_range.setEnabled(bool(C.DMM_FUNCTIONS[key][3]))
         self.cmb_range.blockSignals(False)
         self.btn_rel.setChecked(False)
@@ -185,7 +209,7 @@ class DmmController(QObject):
         if self.hold:
             f.append("HOLD")
         if self.rel_offset is not None:
-            f.append(f"REL ({si_format(self.rel_offset, self.unit)})")
+            f.append(f"REL ({self._fmt(self.rel_offset)})")
         self.lbl_flags.setText("   ".join(f))
 
     def _reset_stats(self):
@@ -226,32 +250,47 @@ class DmmController(QObject):
             if short and time.monotonic() - self._last_beep > 0.25:
                 QApplication.beep()
                 self._last_beep = time.monotonic()
-        text = "OL" if overload else si_format(value, self.unit)
+        text = "OL" if overload else self._fmt(value)
         self.gauge.set_reading(math.inf if overload else value, text, sub)
 
         if self.stats.n:
-            u = self.unit
             self.lbl_stats.setText(
-                f"Min {si_format(self.stats.min, u)}   Max {si_format(self.stats.max, u)}   "
-                f"TB {si_format(self.stats.avg, u)}   n={self.stats.n}")
+                f"Min {self._fmt(self.stats.min)}   Max {self._fmt(self.stats.max)}   "
+                f"TB {self._fmt(self.stats.avg)}   n={self.stats.n}")
 
         if self.chk_auto.isChecked() and time.monotonic() - self._last_auto_rec >= self.sp_auto.value():
             self._last_auto_rec = time.monotonic()
             self.record()
 
+    MAX_ROWS = 10_000  # bảng quá dài làm giao diện chậm và tốn RAM khi tự ghi lâu
+
     def record(self):
         if not math.isfinite(self.last_raw) and not self.hold:
             return
+        if self.table.rowCount() >= self.MAX_ROWS:
+            drop = 1000
+            self.table.setUpdatesEnabled(False)
+            for _ in range(drop):  # bỏ các dòng cũ nhất
+                self.table.removeRow(0)
+            self.table.setUpdatesEnabled(True)
+            self._dropped += drop
+            self.table.setToolTip(f"Đã bỏ {self._dropped} dòng cũ nhất (giới hạn {self.MAX_ROWS} dòng). "
+                                  "Xuất CSV thường xuyên nếu cần giữ hết.")
         row = self.table.rowCount()
         self.table.insertRow(row)
-        val = "OL" if not math.isfinite(self.last_shown) else si_format(self.last_shown, self.unit)
-        items = [str(row + 1), dt.datetime.now().strftime("%H:%M:%S.%f")[:-3],
+        val = self._fmt(self.last_shown)
+        items = [str(row + 1 + self._dropped), dt.datetime.now().strftime("%H:%M:%S.%f")[:-3],
                  C.DMM_FUNCTIONS[self.func][0], val]
         for col, txt in enumerate(items):
             it = QTableWidgetItem(txt)
             it.setData(Qt.UserRole, self.last_shown)
             self.table.setItem(row, col, it)
         self.table.scrollToBottom()
+
+    def _clear_table(self):
+        self.table.setRowCount(0)
+        self._dropped = 0
+        self.table.setToolTip("")
 
     def _export(self):
         path, _ = QFileDialog.getSaveFileName(

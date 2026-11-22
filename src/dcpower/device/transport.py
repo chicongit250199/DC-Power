@@ -29,17 +29,25 @@ class SerialTransport:
         except Exception as e:  # noqa: BLE001
             raise TransportError(str(e)) from e
         self._term = C.SERIAL["terminator"].encode()
+        self._qterm = C.SERIAL.get("query_terminator", C.SERIAL["terminator"]).encode()
         time.sleep(0.1)
         self._ser.reset_input_buffer()
 
-    def write(self, cmd: str) -> None:
+    def write(self, cmd: str, term: bytes | None = None) -> None:
         try:
-            self._ser.write(cmd.encode() + self._term)
+            self._ser.write(cmd.encode() + (self._term if term is None else term))
         except Exception as e:  # noqa: BLE001
             raise TransportError(str(e)) from e
+        if term is None:
+            # Máy bận sau mỗi lệnh ghi: gửi dồn thì chỉ nhận lệnh đầu, hỏi ngay thì không trả lời
+            time.sleep(C.SERIAL["write_delay"])
 
     def query(self, cmd: str) -> str:
-        self.write(cmd)
+        try:
+            self._ser.reset_input_buffer()  # bỏ dòng thừa còn sót để không lệch cặp hỏi/đáp
+        except Exception:  # noqa: BLE001
+            pass
+        self.write(cmd, self._qterm)
         try:
             line = self._ser.readline()
         except Exception as e:  # noqa: BLE001
@@ -120,6 +128,10 @@ class SimTransport:
         val = float(num.group()) if num else 0.0
         if c == "*IDN?":
             return "OWON,SPM3103,SIM0001,V1.0 (GIA LAP)"
+        if c == "MEASURE:ALL:INFO?":
+            v, i = self._psu()
+            mode = 0 if not self.out else (2 if i >= self.iset * 0.999 else 1)
+            return f"{v:.3f},{i:.3f},{v * i:.3f},OFF,OFF,OFF,{mode}"
         if c == "MEAS:ALL?":
             v, i = self._psu()
             return f"{v:.3f},{i:.3f}"
@@ -149,12 +161,20 @@ class SimTransport:
             self.out = True
         elif c == "OUTP OFF":
             self.out = False
-        elif c.startswith("CONF:"):
+        elif c.startswith("FUNC") and not c.endswith("?"):
             for k, f in C.DMM_FUNCTIONS.items():
-                if c == f[2]:
+                if c == f[2].upper():
                     self.func = k
-        elif c.startswith("MEAS1?") or c == "MEAS?":
-            return f"{self._dmm():.6E}"
+        elif c == "FUNCTION?" or c == "FUNC?":
+            return C.DMM_FUNCTIONS[self.func][4]
+        elif c == "CONFIGURE:ALL?" or c == "CONF:ALL?":
+            f = C.DMM_FUNCTIONS[self.func]
+            val = self._dmm()
+            unit = {"Ω": " Ohm"}.get(f[1], f[1])
+            txt = "OL" if val > 1e8 else f"{val:+.4f}{unit}"
+            return f"{f[4]},{txt},AUTO,"
+        elif c in ("MEAS1?", "MEAS?"):
+            return "ERR"
         return None
 
     def close(self) -> None:

@@ -6,3 +6,7 @@ dist/
 *.spec
 .DS_Store
 logs/
+.pytest_cache/
+
+# Phần mềm gốc của hãng (chỉ dùng để đối chiếu, có kèm Java runtime ~100 MB) - không đưa lên git
+DC power multimeter control_V1.7.6/

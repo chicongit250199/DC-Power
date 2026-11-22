@@ -8,6 +8,8 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from .style import T
+
 DEFAULT_STEPS = [(5.0, 1.0, 10.0), (12.0, 1.0, 20.0), (3.3, 0.5, 10.0)]
 
 
@@ -82,8 +84,10 @@ class SequencePanel(QWidget):
         self.running = True
         self._loop, self._idx = 1, -1
         self.btn_run.setText("■ Dừng")
-        self.request_output.emit(True)
+        # Đặt V/A của bước 1 TRƯỚC rồi mới bật output (lệnh đi theo thứ tự hàng đợi),
+        # tránh output ra theo thông số cũ trong lúc chờ.
         self._next()
+        self.request_output.emit(True)
         self._timer.start(100)
 
     def stop(self, finished: bool = False):
@@ -122,4 +126,4 @@ class SequencePanel(QWidget):
             for c in range(3):
                 it = self.table.item(r, c)
                 if it:
-                    it.setBackground(QColor("#3d7bff") if r == row else QColor(0, 0, 0, 0))
+                    it.setBackground(QColor(T["sel_row"]) if r == row else QColor(0, 0, 0, 0))
